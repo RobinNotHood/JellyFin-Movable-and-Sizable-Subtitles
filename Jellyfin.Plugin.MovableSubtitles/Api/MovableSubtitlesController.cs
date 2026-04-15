@@ -1,10 +1,8 @@
-using System.IO;
 using System.Net.Mime;
-using System.Reflection;
 using Jellyfin.Plugin.MovableSubtitles.Configuration;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
 
 namespace Jellyfin.Plugin.MovableSubtitles.Api;
 
@@ -25,7 +23,6 @@ public class MovableSubtitlesController : ControllerBase
     /// </summary>
     /// <returns>JavaScript file.</returns>
     [HttpGet("script.js")]
-    [Produces("application/javascript")]
     public IActionResult GetScript()
     {
         var assembly = typeof(Plugin).Assembly;
@@ -35,7 +32,13 @@ public class MovableSubtitlesController : ControllerBase
             return NotFound();
         }
 
-        return File(stream, "application/javascript");
+        // no-cache so that browsers pick up new content after a plugin update,
+        // charset=utf-8 so that the UI arrow glyphs (↑ ↓ ← →) render correctly
+        // when the web client is served with strict MIME handling.
+        Response.Headers[HeaderNames.CacheControl] = "no-cache, no-store, must-revalidate";
+        Response.Headers[HeaderNames.Pragma] = "no-cache";
+        Response.Headers[HeaderNames.Expires] = "0";
+        return File(stream, "application/javascript; charset=utf-8");
     }
 
     /// <summary>
@@ -53,6 +56,7 @@ public class MovableSubtitlesController : ControllerBase
             return NotFound();
         }
 
+        Response.Headers[HeaderNames.CacheControl] = "no-cache, no-store, must-revalidate";
         return plugin.Configuration;
     }
 }

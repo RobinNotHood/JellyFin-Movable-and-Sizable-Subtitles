@@ -14,10 +14,18 @@
 (function () {
     'use strict';
 
+    var VERSION = '1.1.1';
+
+    // Very first thing - announce that we ran at all. Use console.log (not .info)
+    // because some browsers hide info by default.
+    try { console.log('[MovableSubtitles] script loaded v' + VERSION); } catch (e) {}
+
     if (window.__movableSubtitlesLoaded) {
+        console.log('[MovableSubtitles] already loaded, skipping');
         return;
     }
     window.__movableSubtitlesLoaded = true;
+    window.__movableSubtitlesVersion = VERSION;
 
     var STORAGE_KEY = 'movableSubtitles.state.v2';
     var PANEL_POS_KEY = 'movableSubtitles.panelPos.v1';
@@ -439,7 +447,9 @@
         toggleBtn.className = 'msub-toggle';
         toggleBtn.setAttribute('aria-label', 'Toggle subtitle position controls');
         toggleBtn.setAttribute('aria-pressed', 'false');
-        toggleBtn.innerHTML = '<span style="font-weight:700">Aa</span> <span>⇅</span>';
+        // Glyphs kept simple (Aa + Unicode updown arrow) and wrapped in spans so
+        // they degrade readably even when the page is misinterpreting the encoding.
+        toggleBtn.innerHTML = '<span style="font-weight:700">Aa</span> <span style="font-size:11px">Move</span>';
         toggleBtn.addEventListener('click', function (e) {
             e.stopPropagation();
             togglePanel();
@@ -449,8 +459,17 @@
 
     function updateToggleButtonVisibility() {
         if (!toggleBtn) { return; }
+        // Re-attach if something replaced document.body's children during SPA nav.
+        if (!toggleBtn.isConnected) {
+            document.body.appendChild(toggleBtn);
+        }
         var hasVideo = !!document.querySelector('video');
-        toggleBtn.style.display = (hasVideo && state.showControlPanel) ? 'inline-flex' : 'none';
+        var show = hasVideo && state.showControlPanel;
+        toggleBtn.style.display = show ? 'inline-flex' : 'none';
+        if (show && !toggleBtn.__logged) {
+            toggleBtn.__logged = true;
+            console.log('[MovableSubtitles] toggle button visible');
+        }
         if (!hasVideo && panelEl) { hidePanel(); }
     }
 
@@ -483,9 +502,11 @@
     }
 
     function start() {
+        console.log('[MovableSubtitles] start() running');
         fetchConfig().then(function () {
+            console.log('[MovableSubtitles] config loaded', state);
             if (!state.enabled) {
-                console.info('[MovableSubtitles] disabled via plugin config');
+                console.log('[MovableSubtitles] disabled via plugin config');
                 return;
             }
             injectStyles();
@@ -494,7 +515,9 @@
             attachBehaviour();
             watchDom();
             bindKeyboardShortcut();
-            console.info('[MovableSubtitles] ready (menu mode)');
+            console.log('[MovableSubtitles] ready v' + VERSION + ' (menu mode)');
+        }, function (err) {
+            console.error('[MovableSubtitles] startup error', err);
         });
     }
 
