@@ -1,0 +1,26 @@
+# Build results
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userprefs
+*.cache
+
+# NuGet
+.nuget/
+*.nupkg
+packages/
+
+# Rider / VS
+.idea/
+.vs/
+*.DotSettings.user
+
+# Release artifacts
+dist/
+*.zip
+
+# OS
+.DS_Store
+Thumbs.db

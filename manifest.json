@@ -1,0 +1,11 @@
+[
+  {
+    "category": "General",
+    "guid": "b3f21054-8d26-4d41-946e-da7738c33312",
+    "name": "Movable and Sizable Subtitles",
+    "description": "Better subtitle control for Jellyfin. Drag subtitles to reposition them and scroll/pinch to resize on the fly.",
+    "overview": "Drag subtitles to reposition them and scroll/pinch to resize on the fly.",
+    "owner": "RobinNotHood",
+    "versions": []
+  }
+]
