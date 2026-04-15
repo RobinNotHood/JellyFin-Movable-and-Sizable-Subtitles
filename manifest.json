@@ -8,6 +8,14 @@
     "owner": "RobinNotHood",
     "versions": [
       {
+        "version": "1.1.0.0",
+        "changelog": "Release v1.1.0",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/RobinNotHood/JellyFin-Movable-and-Sizable-Subtitles/releases/download/v1.1.0/movable-subtitles_1.1.0.zip",
+        "checksum": "547acdd60ba4f9df5bdf1e2bd26e9024",
+        "timestamp": "2026-04-15T20:38:46Z"
+      },
+      {
         "version": "1.0.0.0",
         "changelog": "Release v1.0.0",
         "targetAbi": "10.9.0.0",
