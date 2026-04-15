@@ -1,15 +1,15 @@
 /*
- * Movable and Sizable Subtitles for Jellyfin.
- * Injected into the Jellyfin web client on load.
+ * Movable and Sizable Subtitles for Jellyfin  (menu-driven UI)
+ * ------------------------------------------------------------
+ * Injects a small "Aa" toggle button into the Jellyfin video player chrome.
+ * Clicking it opens a floating control panel that lets the viewer
+ *   - nudge subtitles up / down / left / right,
+ *   - increase or decrease their size,
+ *   - jump to top / middle / bottom presets,
+ *   - reset everything.
  *
- * Finds the built-in subtitle rendering surface (.videoSubtitles) and makes it
- *   - draggable by mouse / touch,
- *   - resizable via scroll wheel / pinch gesture,
- *   - persistent per user (optional).
- *
- * The script is served by the plugin at
- *   /MovableSubtitles/script.js
- * and its <script> tag is injected into the web client's index.html at plugin startup.
+ * Direct drag / wheel / pinch on the subtitle element are still available
+ * as opt-in modes (off by default) configurable from the plugin admin page.
  */
 (function () {
     'use strict';
@@ -19,223 +19,467 @@
     }
     window.__movableSubtitlesLoaded = true;
 
-    var STORAGE_KEY = 'movableSubtitles.state.v1';
-    var CONFIG_URL = ApiClientBaseUrl() + '/MovableSubtitles/config';
+    var STORAGE_KEY = 'movableSubtitles.state.v2';
+    var PANEL_POS_KEY = 'movableSubtitles.panelPos.v1';
+
     var state = {
         enabled: true,
-        allowDrag: true,
-        allowResize: true,
+        showControlPanel: true,
+        allowDrag: false,
+        allowResize: false,
         rememberPosition: true,
         defaultFontSize: 100
     };
 
-    function ApiClientBaseUrl() {
+    // Live position/size of the subtitle element.
+    var subPos = { offsetX: 0, offsetY: 0, scale: 1 };
+
+    // References to injected UI nodes.
+    var panelEl = null;
+    var toggleBtn = null;
+    var subtitleEl = null;
+
+    // ------------------------------------------------------------------ Utils
+    function apiBase() {
         try {
             if (window.ApiClient && typeof window.ApiClient.serverAddress === 'function') {
                 return window.ApiClient.serverAddress();
             }
-        } catch (err) {
-            /* ignore */
-        }
+        } catch (e) { /* ignore */ }
         return '';
     }
 
-    function loadState() {
-        if (!state.rememberPosition) {
-            return null;
-        }
+    function loadStored(key) {
         try {
-            var raw = localStorage.getItem(STORAGE_KEY);
+            var raw = localStorage.getItem(key);
             return raw ? JSON.parse(raw) : null;
-        } catch (err) {
-            return null;
-        }
+        } catch (e) { return null; }
     }
 
-    function saveState(pos) {
-        if (!state.rememberPosition) {
-            return;
-        }
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(pos));
-        } catch (err) {
-            /* quota - ignore */
-        }
+    function saveStored(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* quota */ }
     }
 
+    function saveSubPos() {
+        if (!state.rememberPosition) { return; }
+        saveStored(STORAGE_KEY, subPos);
+    }
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+    // --------------------------------------------------------------- Config fetch
     function fetchConfig() {
-        return fetch(CONFIG_URL, { credentials: 'include' })
+        return fetch(apiBase() + '/MovableSubtitles/config', { credentials: 'include' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (cfg) {
-                if (cfg) {
-                    state.enabled = cfg.Enabled !== false;
-                    state.allowDrag = cfg.AllowDrag !== false;
-                    state.allowResize = cfg.AllowResize !== false;
-                    state.rememberPosition = cfg.RememberPosition !== false;
-                    state.defaultFontSize = cfg.DefaultFontSize || 100;
-                }
+                if (!cfg) { return; }
+                state.enabled = cfg.Enabled !== false;
+                state.showControlPanel = cfg.ShowControlPanel !== false;
+                state.allowDrag = !!cfg.AllowDrag;
+                state.allowResize = !!cfg.AllowResize;
+                state.rememberPosition = cfg.RememberPosition !== false;
+                state.defaultFontSize = cfg.DefaultFontSize || 100;
             })
             .catch(function () { /* use defaults */ });
     }
 
+    // --------------------------------------------------------- Subtitle element
     function findSubtitleElement() {
         return document.querySelector('.videoSubtitles')
             || document.querySelector('.htmlvideoplayer .videoSubtitles')
             || document.querySelector('video + div.videoSubtitles');
     }
 
-    function attachBehaviour(el) {
-        if (!el || el.__movableAttached) {
-            return;
+    function findPlayerContainer() {
+        return document.querySelector('.videoPlayerContainer')
+            || document.querySelector('.htmlVideoPlayerContainer')
+            || document.querySelector('.htmlvideoplayer')
+            || document.querySelector('video') && document.querySelector('video').parentElement
+            || document.body;
+    }
+
+    function applyTransform() {
+        if (!subtitleEl) { return; }
+        subtitleEl.style.transform =
+            'translate(' + subPos.offsetX + 'px, ' + subPos.offsetY + 'px) scale(' + subPos.scale + ')';
+        subtitleEl.style.transformOrigin = 'center center';
+        subtitleEl.style.transition = 'transform 120ms ease-out';
+        subtitleEl.style.pointerEvents = state.allowDrag ? 'auto' : 'none';
+        subtitleEl.style.userSelect = 'none';
+        subtitleEl.style.cursor = state.allowDrag ? 'grab' : '';
+    }
+
+    function loadSubPosFromStorage() {
+        var stored = state.rememberPosition ? loadStored(STORAGE_KEY) : null;
+        if (stored) {
+            subPos.offsetX = stored.offsetX || 0;
+            subPos.offsetY = stored.offsetY || 0;
+            subPos.scale = stored.scale || (state.defaultFontSize / 100);
+        } else {
+            subPos.offsetX = 0;
+            subPos.offsetY = 0;
+            subPos.scale = state.defaultFontSize / 100;
         }
-        el.__movableAttached = true;
+    }
 
-        var stored = loadState() || {};
-        var scale = stored.scale || (state.defaultFontSize / 100);
-        var offsetX = stored.offsetX || 0;
-        var offsetY = stored.offsetY || 0;
+    // ------------------------------------------------------------ Optional drag
+    function bindDirectManipulation(el) {
+        if (el.__movableDirectBound) { return; }
+        el.__movableDirectBound = true;
 
-        function apply() {
-            el.style.transform = 'translate(' + offsetX + 'px, ' + offsetY + 'px) scale(' + scale + ')';
-            el.style.transformOrigin = 'center center';
-            el.style.transition = 'none';
-            el.style.cursor = state.allowDrag ? 'grab' : '';
-            el.style.touchAction = 'none';
-            el.style.userSelect = 'none';
-            el.style.pointerEvents = 'auto';
-        }
-        apply();
-
-        // --- Dragging (mouse + touch) ---
         var dragging = false;
-        var startX = 0;
-        var startY = 0;
-        var baseOffsetX = 0;
-        var baseOffsetY = 0;
+        var startX = 0, startY = 0, baseX = 0, baseY = 0;
 
-        function onPointerDown(e) {
-            if (!state.allowDrag) {
-                return;
-            }
+        function down(e) {
+            if (!state.allowDrag) { return; }
             dragging = true;
+            var p = e.touches ? e.touches[0] : e;
+            startX = p.clientX; startY = p.clientY;
+            baseX = subPos.offsetX; baseY = subPos.offsetY;
             el.style.cursor = 'grabbing';
-            var point = e.touches ? e.touches[0] : e;
-            startX = point.clientX;
-            startY = point.clientY;
-            baseOffsetX = offsetX;
-            baseOffsetY = offsetY;
             e.preventDefault();
         }
-
-        function onPointerMove(e) {
-            if (!dragging) {
-                return;
-            }
-            var point = e.touches ? e.touches[0] : e;
-            offsetX = baseOffsetX + (point.clientX - startX);
-            offsetY = baseOffsetY + (point.clientY - startY);
-            apply();
+        function move(e) {
+            if (!dragging) { return; }
+            var p = e.touches ? e.touches[0] : e;
+            subPos.offsetX = baseX + (p.clientX - startX);
+            subPos.offsetY = baseY + (p.clientY - startY);
+            applyTransform();
         }
-
-        function onPointerUp() {
-            if (!dragging) {
-                return;
-            }
+        function up() {
+            if (!dragging) { return; }
             dragging = false;
             el.style.cursor = state.allowDrag ? 'grab' : '';
-            saveState({ scale: scale, offsetX: offsetX, offsetY: offsetY });
+            saveSubPos();
         }
 
-        el.addEventListener('mousedown', onPointerDown);
-        window.addEventListener('mousemove', onPointerMove);
-        window.addEventListener('mouseup', onPointerUp);
+        el.addEventListener('mousedown', down);
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+        el.addEventListener('touchstart', down, { passive: false });
+        window.addEventListener('touchmove', move, { passive: false });
+        window.addEventListener('touchend', up);
 
-        el.addEventListener('touchstart', onPointerDown, { passive: false });
-        window.addEventListener('touchmove', onPointerMove, { passive: false });
-        window.addEventListener('touchend', onPointerUp);
-
-        // --- Resizing (wheel) ---
         el.addEventListener('wheel', function (e) {
-            if (!state.allowResize) {
-                return;
-            }
+            if (!state.allowResize) { return; }
             e.preventDefault();
-            var delta = e.deltaY < 0 ? 0.05 : -0.05;
-            scale = Math.min(3, Math.max(0.5, scale + delta));
-            apply();
-            saveState({ scale: scale, offsetX: offsetX, offsetY: offsetY });
+            subPos.scale = clamp(subPos.scale + (e.deltaY < 0 ? 0.05 : -0.05), 0.5, 3);
+            applyTransform();
+            saveSubPos();
         }, { passive: false });
+    }
 
-        // --- Resizing (pinch) ---
-        var pinchStartDist = 0;
-        var pinchStartScale = scale;
-        el.addEventListener('touchstart', function (e) {
-            if (!state.allowResize || e.touches.length !== 2) {
-                return;
-            }
-            pinchStartDist = touchDistance(e.touches);
-            pinchStartScale = scale;
-        }, { passive: false });
+    // ----------------------------------------------------------------- Presets
+    function presetTop() {
+        if (!subtitleEl) { return; }
+        var container = findPlayerContainer();
+        var rect = container.getBoundingClientRect();
+        subPos.offsetY = -Math.round(rect.height * 0.40);
+        subPos.offsetX = 0;
+        applyTransform(); saveSubPos();
+    }
 
-        el.addEventListener('touchmove', function (e) {
-            if (!state.allowResize || e.touches.length !== 2) {
-                return;
-            }
-            var d = touchDistance(e.touches);
-            if (pinchStartDist > 0) {
-                scale = Math.min(3, Math.max(0.5, pinchStartScale * (d / pinchStartDist)));
-                apply();
-            }
-            e.preventDefault();
-        }, { passive: false });
+    function presetMiddle() {
+        if (!subtitleEl) { return; }
+        var container = findPlayerContainer();
+        var rect = container.getBoundingClientRect();
+        subPos.offsetY = -Math.round(rect.height * 0.20);
+        subPos.offsetX = 0;
+        applyTransform(); saveSubPos();
+    }
 
-        el.addEventListener('touchend', function () {
-            pinchStartDist = 0;
-            saveState({ scale: scale, offsetX: offsetX, offsetY: offsetY });
+    function presetBottom() {
+        subPos.offsetX = 0;
+        subPos.offsetY = 0;
+        applyTransform(); saveSubPos();
+    }
+
+    function resetAll() {
+        subPos.offsetX = 0;
+        subPos.offsetY = 0;
+        subPos.scale = state.defaultFontSize / 100;
+        applyTransform(); saveSubPos();
+    }
+
+    function nudge(dx, dy) {
+        subPos.offsetX += dx;
+        subPos.offsetY += dy;
+        applyTransform(); saveSubPos();
+    }
+
+    function resize(delta) {
+        subPos.scale = clamp(subPos.scale + delta, 0.5, 3);
+        applyTransform(); saveSubPos();
+    }
+
+    // ------------------------------------------------------------------ Styles
+    function injectStyles() {
+        if (document.getElementById('movableSubtitlesStyles')) { return; }
+        var css = ''
+            + '.msub-toggle{position:fixed;top:12px;right:12px;z-index:99998;'
+            + 'background:rgba(0,0,0,0.65);color:#fff;border:1px solid rgba(255,255,255,0.25);'
+            + 'border-radius:999px;padding:6px 12px;font:600 13px/1 sans-serif;cursor:pointer;'
+            + 'display:none;align-items:center;gap:6px;backdrop-filter:blur(4px);'
+            + '-webkit-backdrop-filter:blur(4px);transition:opacity .15s ease;opacity:0.85}'
+            + '.msub-toggle:hover{opacity:1}'
+            + '.msub-toggle[aria-pressed="true"]{background:#00a4dc;border-color:#00a4dc}'
+            + '.msub-panel{position:fixed;top:54px;right:12px;z-index:99999;'
+            + 'background:rgba(20,20,20,0.92);color:#fff;border:1px solid rgba(255,255,255,0.18);'
+            + 'border-radius:8px;padding:10px 12px;min-width:224px;'
+            + 'box-shadow:0 8px 24px rgba(0,0,0,0.5);font:13px/1.3 sans-serif;'
+            + 'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);'
+            + 'user-select:none;display:none}'
+            + '.msub-panel.msub-open{display:block}'
+            + '.msub-panel h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;'
+            + 'letter-spacing:.06em;color:#9ac4ff;font-weight:600}'
+            + '.msub-panel .msub-header{display:flex;justify-content:space-between;align-items:center;'
+            + 'margin:-4px -4px 8px;padding:4px;cursor:move;border-bottom:1px solid rgba(255,255,255,0.08)}'
+            + '.msub-panel .msub-title{font-weight:600}'
+            + '.msub-panel .msub-close{background:transparent;border:0;color:#fff;font-size:18px;'
+            + 'line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px}'
+            + '.msub-panel .msub-close:hover{background:rgba(255,255,255,0.1)}'
+            + '.msub-panel .msub-section{margin:8px 0}'
+            + '.msub-panel .msub-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;'
+            + 'max-width:150px;margin:0 auto}'
+            + '.msub-panel .msub-pad button{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);'
+            + 'color:#fff;border-radius:6px;padding:10px 0;font-size:16px;cursor:pointer;'
+            + 'transition:background .1s}'
+            + '.msub-panel .msub-pad button:hover{background:rgba(255,255,255,0.18)}'
+            + '.msub-panel .msub-pad button:active{background:#00a4dc}'
+            + '.msub-panel .msub-pad .msub-spacer{visibility:hidden}'
+            + '.msub-panel .msub-pad .msub-reset{background:rgba(0,164,220,0.25);border-color:#00a4dc}'
+            + '.msub-panel .msub-row{display:flex;gap:6px;align-items:center;justify-content:space-between}'
+            + '.msub-panel .msub-row button{flex:1;background:rgba(255,255,255,0.08);'
+            + 'border:1px solid rgba(255,255,255,0.15);color:#fff;border-radius:6px;padding:8px 0;'
+            + 'font-size:14px;cursor:pointer}'
+            + '.msub-panel .msub-row button:hover{background:rgba(255,255,255,0.18)}'
+            + '.msub-panel .msub-size{font-variant-numeric:tabular-nums;min-width:52px;text-align:center;'
+            + 'padding:6px 10px;background:rgba(255,255,255,0.06);border-radius:6px}'
+            + '.msub-panel .msub-presets{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}'
+            + '.msub-panel .msub-presets button{background:rgba(255,255,255,0.08);'
+            + 'border:1px solid rgba(255,255,255,0.15);color:#fff;border-radius:6px;padding:8px 0;'
+            + 'font-size:12px;cursor:pointer}'
+            + '.msub-panel .msub-presets button:hover{background:rgba(255,255,255,0.18)}'
+            + '.msub-panel .msub-reset-all{width:100%;margin-top:4px;background:transparent;'
+            + 'border:1px solid rgba(255,255,255,0.2);color:#ddd;border-radius:6px;padding:6px 0;'
+            + 'font-size:12px;cursor:pointer}'
+            + '.msub-panel .msub-reset-all:hover{background:rgba(255,255,255,0.08);color:#fff}';
+        var styleEl = document.createElement('style');
+        styleEl.id = 'movableSubtitlesStyles';
+        styleEl.textContent = css;
+        document.head.appendChild(styleEl);
+    }
+
+    // ------------------------------------------------------------------ Panel
+    function buildPanel() {
+        if (panelEl) { return panelEl; }
+        panelEl = document.createElement('div');
+        panelEl.className = 'msub-panel';
+        panelEl.setAttribute('role', 'dialog');
+        panelEl.setAttribute('aria-label', 'Subtitle position controls');
+        panelEl.innerHTML = ''
+            + '<div class="msub-header">'
+            + '  <span class="msub-title">Subtitle Controls</span>'
+            + '  <button type="button" class="msub-close" aria-label="Close">×</button>'
+            + '</div>'
+            + '<div class="msub-section">'
+            + '  <h4>Position</h4>'
+            + '  <div class="msub-pad">'
+            + '    <div class="msub-spacer"></div>'
+            + '    <button type="button" data-dir="up" aria-label="Move up">↑</button>'
+            + '    <div class="msub-spacer"></div>'
+            + '    <button type="button" data-dir="left" aria-label="Move left">←</button>'
+            + '    <button type="button" class="msub-reset" data-dir="center" aria-label="Center">⌂</button>'
+            + '    <button type="button" data-dir="right" aria-label="Move right">→</button>'
+            + '    <div class="msub-spacer"></div>'
+            + '    <button type="button" data-dir="down" aria-label="Move down">↓</button>'
+            + '    <div class="msub-spacer"></div>'
+            + '  </div>'
+            + '</div>'
+            + '<div class="msub-section">'
+            + '  <h4>Size</h4>'
+            + '  <div class="msub-row">'
+            + '    <button type="button" data-size="-" aria-label="Smaller">A−</button>'
+            + '    <span class="msub-size" data-role="sizeReadout">100%</span>'
+            + '    <button type="button" data-size="+" aria-label="Larger">A+</button>'
+            + '  </div>'
+            + '</div>'
+            + '<div class="msub-section">'
+            + '  <h4>Quick position</h4>'
+            + '  <div class="msub-presets">'
+            + '    <button type="button" data-preset="top">Top</button>'
+            + '    <button type="button" data-preset="middle">Middle</button>'
+            + '    <button type="button" data-preset="bottom">Bottom</button>'
+            + '  </div>'
+            + '</div>'
+            + '<button type="button" class="msub-reset-all" data-action="resetAll">Reset all</button>';
+        document.body.appendChild(panelEl);
+
+        // Restore remembered panel position
+        var storedPanelPos = loadStored(PANEL_POS_KEY);
+        if (storedPanelPos && typeof storedPanelPos.top === 'number') {
+            panelEl.style.top = storedPanelPos.top + 'px';
+            panelEl.style.right = 'auto';
+            panelEl.style.left = storedPanelPos.left + 'px';
+        }
+
+        // Close button
+        panelEl.querySelector('.msub-close').addEventListener('click', function () {
+            hidePanel();
         });
 
-        function touchDistance(touches) {
-            var dx = touches[0].clientX - touches[1].clientX;
-            var dy = touches[0].clientY - touches[1].clientY;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-
-        // Double-click / double-tap resets to default
-        var lastTap = 0;
-        function resetPosition() {
-            offsetX = 0;
-            offsetY = 0;
-            scale = state.defaultFontSize / 100;
-            apply();
-            saveState({ scale: scale, offsetX: offsetX, offsetY: offsetY });
-        }
-        el.addEventListener('dblclick', resetPosition);
-        el.addEventListener('touchend', function () {
-            var now = Date.now();
-            if (now - lastTap < 350) {
-                resetPosition();
+        // Directional pad (click + hold-to-repeat)
+        panelEl.querySelectorAll('.msub-pad button').forEach(function (btn) {
+            var held;
+            function start(e) {
+                e.preventDefault();
+                var dir = btn.getAttribute('data-dir');
+                actDir(dir);
+                held = setInterval(function () { actDir(dir); }, 90);
             }
-            lastTap = now;
+            function stop() { clearInterval(held); held = null; }
+            btn.addEventListener('mousedown', start);
+            btn.addEventListener('touchstart', start, { passive: false });
+            btn.addEventListener('mouseup', stop);
+            btn.addEventListener('mouseleave', stop);
+            btn.addEventListener('touchend', stop);
+            btn.addEventListener('touchcancel', stop);
+        });
+
+        // Size row
+        panelEl.querySelectorAll('[data-size]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                resize(btn.getAttribute('data-size') === '+' ? 0.05 : -0.05);
+                updateSizeReadout();
+            });
+        });
+
+        // Presets
+        panelEl.querySelectorAll('[data-preset]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var p = btn.getAttribute('data-preset');
+                if (p === 'top') { presetTop(); }
+                else if (p === 'middle') { presetMiddle(); }
+                else { presetBottom(); }
+            });
+        });
+
+        panelEl.querySelector('[data-action="resetAll"]').addEventListener('click', function () {
+            resetAll();
+            updateSizeReadout();
+        });
+
+        makePanelDraggable();
+        return panelEl;
+    }
+
+    function actDir(dir) {
+        var step = 8;
+        if (dir === 'up') { nudge(0, -step); }
+        else if (dir === 'down') { nudge(0, step); }
+        else if (dir === 'left') { nudge(-step, 0); }
+        else if (dir === 'right') { nudge(step, 0); }
+        else if (dir === 'center') { subPos.offsetX = 0; applyTransform(); saveSubPos(); }
+    }
+
+    function updateSizeReadout() {
+        if (!panelEl) { return; }
+        var el = panelEl.querySelector('[data-role="sizeReadout"]');
+        if (el) { el.textContent = Math.round(subPos.scale * 100) + '%'; }
+    }
+
+    function makePanelDraggable() {
+        var header = panelEl.querySelector('.msub-header');
+        var dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+        header.addEventListener('mousedown', function (e) {
+            if (e.target.classList.contains('msub-close')) { return; }
+            dragging = true;
+            var rect = panelEl.getBoundingClientRect();
+            startX = e.clientX; startY = e.clientY;
+            startLeft = rect.left; startTop = rect.top;
+            panelEl.style.right = 'auto';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', function (e) {
+            if (!dragging) { return; }
+            var left = clamp(startLeft + (e.clientX - startX), 0, window.innerWidth - 100);
+            var top = clamp(startTop + (e.clientY - startY), 0, window.innerHeight - 60);
+            panelEl.style.left = left + 'px';
+            panelEl.style.top = top + 'px';
+        });
+        document.addEventListener('mouseup', function () {
+            if (!dragging) { return; }
+            dragging = false;
+            var rect = panelEl.getBoundingClientRect();
+            saveStored(PANEL_POS_KEY, { top: rect.top, left: rect.left });
         });
     }
 
-    function watchForSubtitles() {
+    function showPanel() {
+        buildPanel();
+        panelEl.classList.add('msub-open');
+        updateSizeReadout();
+        if (toggleBtn) { toggleBtn.setAttribute('aria-pressed', 'true'); }
+    }
+    function hidePanel() {
+        if (panelEl) { panelEl.classList.remove('msub-open'); }
+        if (toggleBtn) { toggleBtn.setAttribute('aria-pressed', 'false'); }
+    }
+    function togglePanel() {
+        if (panelEl && panelEl.classList.contains('msub-open')) { hidePanel(); }
+        else { showPanel(); }
+    }
+
+    // ---------------------------------------------------------------- Toggle btn
+    function buildToggleButton() {
+        if (toggleBtn) { return; }
+        toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'msub-toggle';
+        toggleBtn.setAttribute('aria-label', 'Toggle subtitle position controls');
+        toggleBtn.setAttribute('aria-pressed', 'false');
+        toggleBtn.innerHTML = '<span style="font-weight:700">Aa</span> <span>⇅</span>';
+        toggleBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            togglePanel();
+        });
+        document.body.appendChild(toggleBtn);
+    }
+
+    function updateToggleButtonVisibility() {
+        if (!toggleBtn) { return; }
+        var hasVideo = !!document.querySelector('video');
+        toggleBtn.style.display = (hasVideo && state.showControlPanel) ? 'inline-flex' : 'none';
+        if (!hasVideo && panelEl) { hidePanel(); }
+    }
+
+    // ------------------------------------------------------------------- Main
+    function attachBehaviour() {
+        subtitleEl = findSubtitleElement();
+        if (subtitleEl) {
+            applyTransform();
+            bindDirectManipulation(subtitleEl);
+        }
+        updateToggleButtonVisibility();
+    }
+
+    function watchDom() {
         var observer = new MutationObserver(function () {
-            if (!state.enabled) {
-                return;
-            }
-            var el = findSubtitleElement();
-            if (el) {
-                attachBehaviour(el);
-            }
+            attachBehaviour();
         });
         observer.observe(document.body, { childList: true, subtree: true });
+    }
 
-        // Also try immediately in case it's already there.
-        var el = findSubtitleElement();
-        if (el && state.enabled) {
-            attachBehaviour(el);
-        }
+    function bindKeyboardShortcut() {
+        document.addEventListener('keydown', function (e) {
+            // Ctrl+Shift+S — open/close panel. Also plain 's' when a video is focused.
+            if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+                if (!state.enabled || !state.showControlPanel) { return; }
+                e.preventDefault();
+                togglePanel();
+            }
+        });
     }
 
     function start() {
@@ -244,8 +488,13 @@
                 console.info('[MovableSubtitles] disabled via plugin config');
                 return;
             }
-            watchForSubtitles();
-            console.info('[MovableSubtitles] ready');
+            injectStyles();
+            loadSubPosFromStorage();
+            buildToggleButton();
+            attachBehaviour();
+            watchDom();
+            bindKeyboardShortcut();
+            console.info('[MovableSubtitles] ready (menu mode)');
         });
     }
 

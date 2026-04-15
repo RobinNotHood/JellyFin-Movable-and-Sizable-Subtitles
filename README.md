@@ -1,13 +1,25 @@
 # JellyFin Movable and Sizable Subtitles
 
-Better subtitle control for Jellyfin.
+Better subtitle control for Jellyfin — **menu-driven**.
 
-While watching anything on the Jellyfin web client you can:
+While watching anything on the Jellyfin web client, an **Aa ⇅** button appears in
+the top-right. Click it to open a floating control panel with:
 
-- **Drag** the subtitles with mouse or touch to reposition them anywhere on the video.
-- **Scroll / pinch** on the subtitles to resize them live.
-- **Double-click / double-tap** to reset to the default position and size.
-- (Optional) remember position and size per user across sessions.
+- **Position pad** — ↑ ↓ ← → arrow buttons to nudge the subtitles (hold to
+  scroll, tap `⌂` to center horizontally).
+- **Size** — `A−` / `A+` buttons with a live size readout.
+- **Quick position presets** — one tap for `Top`, `Middle` or `Bottom`.
+- **Reset all** — back to default position and size.
+- Keyboard shortcut: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>.
+
+The panel itself is draggable (grab the header) and remembers where you put
+it. Position / size changes are remembered per browser across sessions.
+
+### Advanced (off by default)
+
+If you prefer direct manipulation, the plugin's admin page has opt-in toggles
+to enable dragging the subtitle text with the mouse / touch, and resizing it
+via scroll wheel or pinch — just like the subtitles themselves were a handle.
 
 ## Install (the same way you add any Jellyfin plugin repository)
 
@@ -36,10 +48,11 @@ After the restart, open any video with subtitles and try dragging them.
 After installing, go to **Dashboard → Plugins → Movable and Sizable Subtitles** to toggle:
 
 - Enable / disable the plugin
-- Allow dragging
-- Allow resizing (scroll + pinch)
+- Show the on-screen control panel
+- (Advanced) allow dragging the subtitle text directly
+- (Advanced) allow resizing via scroll / pinch on the subtitle text
 - Remember position/size between sessions
-- Default font size (%)
+- Default subtitle size (%)
 
 ## How it works
 

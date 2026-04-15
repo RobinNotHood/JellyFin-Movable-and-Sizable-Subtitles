@@ -1,18 +1,21 @@
 ---
 name: "Movable and Sizable Subtitles"
 guid: "b3f21054-8d26-4d41-946e-da7738c33312"
-version: "1.0.0.0"
+version: "1.1.0.0"
 targetAbi: "10.9.0.0"
 framework: "net8.0"
 owner: "RobinNotHood"
-overview: "Drag subtitles to reposition them and scroll/pinch to resize on the fly."
+overview: "Menu-driven subtitle move/resize for the Jellyfin web client."
 description: >-
-  Better subtitle control for Jellyfin. While watching, you can click-and-drag
-  subtitles to any position on the video surface and scroll the mouse wheel
-  (or pinch on touch devices) to resize them. Double-click or double-tap to
-  reset. Positions/sizes can optionally persist across sessions.
+  Adds an on-screen control panel to the Jellyfin video player for moving
+  and resizing subtitles. Arrow buttons nudge the subtitles in any direction,
+  A- / A+ buttons change the size, and quick preset buttons snap subtitles to
+  the top, middle or bottom of the screen. Direct drag and scroll-to-resize
+  on the subtitle element are still available as an opt-in in the plugin
+  settings.
 category: "General"
 artifacts:
   - "Jellyfin.Plugin.MovableSubtitles.dll"
 changelog: >-
-  Initial release.
+  v1.1.0: menu-driven control panel with move/resize/preset buttons.
+  Direct drag/scroll moved to opt-in advanced settings.

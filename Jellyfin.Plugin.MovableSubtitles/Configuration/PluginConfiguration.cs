@@ -13,8 +13,9 @@ public class PluginConfiguration : BasePluginConfiguration
     public PluginConfiguration()
     {
         Enabled = true;
-        AllowDrag = true;
-        AllowResize = true;
+        ShowControlPanel = true;
+        AllowDrag = false;
+        AllowResize = false;
         DefaultFontSize = 100;
         RememberPosition = true;
     }
@@ -25,12 +26,20 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool Enabled { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the user can drag subtitles with the mouse / touch.
+    /// Gets or sets a value indicating whether the on-screen subtitle control panel (menu-driven
+    /// toggle button + floating panel) is shown during playback.
+    /// </summary>
+    public bool ShowControlPanel { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the user can drag subtitles directly with mouse / touch
+    /// (in addition to the control panel buttons).
     /// </summary>
     public bool AllowDrag { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether the user can resize subtitles via scroll wheel / pinch.
+    /// Gets or sets a value indicating whether the user can resize subtitles via scroll wheel / pinch
+    /// directly on the subtitle element (in addition to the control panel buttons).
     /// </summary>
     public bool AllowResize { get; set; }
 

@@ -17,9 +17,12 @@
                         <h2 class="sectionTitle">Movable and Sizable Subtitles</h2>
                     </div>
                     <p>
-                        Lets users drag subtitles to any position on the video and resize them
-                        on the fly (scroll wheel / pinch). Settings below apply to every web
-                        client user on this server.
+                        Adds an <strong>"Aa ⇅"</strong> button to the video player. Clicking it opens
+                        a floating control panel with arrow buttons to move the subtitles, size
+                        controls, quick presets (Top / Middle / Bottom) and a Reset All button.
+                    </p>
+                    <p>
+                        Keyboard shortcut: <code>Ctrl + Shift + S</code>.
                     </p>
                 </div>
 
@@ -29,36 +32,59 @@
                         <span>Enable plugin</span>
                     </label>
                     <div class="fieldDescription">
-                        When disabled, the plugin script is not injected into the web client.
+                        When disabled, no script is served to the web client.
                     </div>
                 </div>
 
                 <div class="checkboxContainer">
                     <label>
-                        <input is="emby-checkbox" type="checkbox" id="AllowDrag" />
-                        <span>Allow dragging subtitles</span>
+                        <input is="emby-checkbox" type="checkbox" id="ShowControlPanel" />
+                        <span>Show on-screen control panel (menu)</span>
                     </label>
-                </div>
-
-                <div class="checkboxContainer">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="AllowResize" />
-                        <span>Allow resizing subtitles (scroll / pinch)</span>
-                    </label>
-                </div>
-
-                <div class="checkboxContainer">
-                    <label>
-                        <input is="emby-checkbox" type="checkbox" id="RememberPosition" />
-                        <span>Remember last position and size per user</span>
-                    </label>
-                </div>
-
-                <div class="inputContainer">
-                    <label class="inputLabel inputLabelUnfocused" for="DefaultFontSize">Default font size (%)</label>
-                    <input is="emby-input" type="number" id="DefaultFontSize" min="50" max="300" step="5" />
                     <div class="fieldDescription">
-                        Starting subtitle size as a percentage of the web client default (50-300).
+                        Shows the "Aa ⇅" toggle button during playback. This is the primary way to
+                        move/resize subtitles.
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Advanced: direct manipulation</h3>
+                    <p class="fieldDescription" style="margin-bottom:8px">
+                        Off by default. Enable if you want to drag / scroll directly on the subtitle text
+                        instead of using the panel buttons.
+                    </p>
+
+                    <div class="checkboxContainer">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="AllowDrag" />
+                            <span>Allow dragging the subtitle text with mouse / touch</span>
+                        </label>
+                    </div>
+
+                    <div class="checkboxContainer">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="AllowResize" />
+                            <span>Allow resizing via scroll wheel / pinch on the subtitle text</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="verticalSection">
+                    <h3 class="sectionTitle">Defaults</h3>
+
+                    <div class="checkboxContainer">
+                        <label>
+                            <input is="emby-checkbox" type="checkbox" id="RememberPosition" />
+                            <span>Remember last position and size per browser / user</span>
+                        </label>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="DefaultFontSize">Default subtitle size (%)</label>
+                        <input is="emby-input" type="number" id="DefaultFontSize" min="50" max="300" step="5" />
+                        <div class="fieldDescription">
+                            Starting subtitle size as a percentage of the web client default (50-300).
+                        </div>
                     </div>
                 </div>
 
@@ -79,6 +105,7 @@
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     page.querySelector('#Enabled').checked = !!config.Enabled;
+                    page.querySelector('#ShowControlPanel').checked = config.ShowControlPanel !== false;
                     page.querySelector('#AllowDrag').checked = !!config.AllowDrag;
                     page.querySelector('#AllowResize').checked = !!config.AllowResize;
                     page.querySelector('#RememberPosition').checked = !!config.RememberPosition;
@@ -97,6 +124,7 @@
                 Dashboard.showLoadingMsg();
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     config.Enabled = page.querySelector('#Enabled').checked;
+                    config.ShowControlPanel = page.querySelector('#ShowControlPanel').checked;
                     config.AllowDrag = page.querySelector('#AllowDrag').checked;
                     config.AllowResize = page.querySelector('#AllowResize').checked;
                     config.RememberPosition = page.querySelector('#RememberPosition').checked;
