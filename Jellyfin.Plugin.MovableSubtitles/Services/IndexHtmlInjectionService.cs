@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Configuration;
@@ -13,14 +15,16 @@ namespace Jellyfin.Plugin.MovableSubtitles.Services;
 /// On server start, patches the web client's index.html so that it loads
 /// the plugin's client script (/MovableSubtitles/script.js).
 ///
-/// The patch is idempotent: if the marker tag is already present, nothing happens.
+/// The patch is idempotent: if the marker tag is already present but for a
+/// different version, the stale tag is rewritten to include the current
+/// plugin version as a cache-busting query string.
 /// </summary>
 public class IndexHtmlInjectionService : IHostedService
 {
-    private const string InjectionMarker = "<!-- movable-subtitles-injection -->";
-    private const string ScriptTag =
-        InjectionMarker +
-        "<script defer src=\"MovableSubtitles/script.js\"></script>";
+    private const string InjectionMarker = "<!-- movable-subtitles-injection";
+    private static readonly Regex ExistingTagRegex = new(
+        @"<!-- movable-subtitles-injection[^>]*-->[\s\S]*?</script>",
+        RegexOptions.Compiled);
 
     private readonly IServerApplicationPaths _appPaths;
     private readonly IServerApplicationHost _appHost;
@@ -97,26 +101,48 @@ public class IndexHtmlInjectionService : IHostedService
     private void Inject(string indexPath)
     {
         var content = File.ReadAllText(indexPath);
-        if (content.Contains(InjectionMarker, StringComparison.Ordinal))
-        {
-            _logger.LogDebug("Movable Subtitles script tag already present in {Path}", indexPath);
-            return;
-        }
+        var pluginVersion = GetPluginVersion();
+        var scriptTag =
+            $"<!-- movable-subtitles-injection v{pluginVersion} -->" +
+            $"<script defer src=\"MovableSubtitles/script.js?v={pluginVersion}\"></script>";
 
-        var insertionIndex = content.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        if (insertionIndex < 0)
+        // If our tag is already present, replace it so that updates pick up the
+        // new version (via the ?v= query string) and old stale tags get pruned.
+        var existing = ExistingTagRegex.Match(content);
+        string patched;
+        if (existing.Success)
         {
-            _logger.LogWarning("index.html does not contain a </body> tag; skipping injection");
-            return;
-        }
+            if (existing.Value == scriptTag)
+            {
+                _logger.LogDebug(
+                    "Movable Subtitles v{Version} script tag already present in {Path}",
+                    pluginVersion,
+                    indexPath);
+                return;
+            }
 
-        var patched = content.Insert(insertionIndex, ScriptTag);
+            patched = content.Substring(0, existing.Index)
+                + scriptTag
+                + content.Substring(existing.Index + existing.Length);
+        }
+        else
+        {
+            var insertionIndex = content.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+            if (insertionIndex < 0)
+            {
+                _logger.LogWarning("index.html does not contain a </body> tag; skipping injection");
+                return;
+            }
+
+            patched = content.Insert(insertionIndex, scriptTag);
+        }
 
         try
         {
             File.WriteAllText(indexPath, patched);
             _logger.LogInformation(
-                "Injected Movable Subtitles script into {Path} (server {Version})",
+                "Injected Movable Subtitles v{Version} script into {Path} (server {Server})",
+                pluginVersion,
                 indexPath,
                 _appHost.ApplicationVersionString);
         }
@@ -126,5 +152,17 @@ public class IndexHtmlInjectionService : IHostedService
                 "No write access to {Path}; run Jellyfin with permission to modify the web client",
                 indexPath);
         }
+    }
+
+    private static string GetPluginVersion()
+    {
+        var version = typeof(IndexHtmlInjectionService).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(IndexHtmlInjectionService).Assembly.GetName().Version?.ToString()
+            ?? "dev";
+
+        // Trim any "+git…" suffix that might be appended by the build.
+        var plus = version.IndexOf('+');
+        return plus >= 0 ? version.Substring(0, plus) : version;
     }
 }
